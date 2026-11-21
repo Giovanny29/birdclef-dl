@@ -154,6 +154,13 @@ class Cnn14(nn.Module):
     `bn0` (BatchNorm por banda Mel) reestima suas estatísticas no ajuste fino.
     """
 
+    # Lote máximo na inferência: com 256 (o padrão de treino.prever_janelas) a passagem direta pede
+    # ~4,2 GiB e não cabe numa GPU de 4 GB; com 32 o pico fica em ~1,5 GiB (medido numa RTX 3050).
+    lote_inferencia = 32
+    # Folga de VRAM que o treino pede (lote 16, precisão mista: pico medido de 1,7 GiB, mais a
+    # avaliação). Com 3 GB, `treino.cabe_na_gpu` deixa o mel64 (1,2 GB de treino/validação) na CPU.
+    vram_treino_gb = 3.0
+
     def __init__(self, n_classes: int, pretreinado: bool = True, n_mels: int = 64):
         super().__init__()
         self.bn0 = nn.BatchNorm2d(n_mels)
@@ -217,10 +224,41 @@ class CabecaLinear(nn.Module):
         return self.saida(self.dropout(x))
 
 
+# ----------------------------------------------------------------------------- M5: CNN de imagem (E5)
+
+class CNNImagem(nn.Module):
+    """M5 (E5, comparação): EfficientNet-B0 pré-treinada no ImageNet (timm) sobre o log-Mel 128 × 313.
+
+    Pergunta: pré-treino em imagens naturais ajuda tanto quanto pré-treino em áudio (M3)? A entrada
+    tem 1 canal; o timm adapta a primeira convolução somando os pesos dos 3 canais RGB. A cabeça do
+    ImageNet é trocada por `saida` (n_classes). Pesos baixados para `checkpoints/pretreinados/hf/`.
+    """
+
+    vram_treino_gb = 2.0  # EfficientNet-B0, lote 64 sobre 128 × 313
+
+    def __init__(self, n_classes: int, pretreinado: bool = True, arquitetura: str = "efficientnet_b0"):
+        super().__init__()
+        import timm
+        kwargs = {"cache_dir": str(pasta_pretreinados() / "hf")} if pretreinado else {}
+        self.corpo = timm.create_model(arquitetura, pretrained=pretreinado, in_chans=1, num_classes=0, **kwargs)
+        self.dropout = nn.Dropout(0.3)
+        self.saida = nn.Linear(self.corpo.num_features, n_classes)
+
+    def embedding(self, x: torch.Tensor) -> torch.Tensor:
+        return self.corpo(x.unsqueeze(1))   # (B, num_features), já com pooling global
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.saida(self.dropout(self.embedding(x)))
+
+    def grupos_parametros(self, lr_backbone: float, lr_cabeca: float) -> list[dict]:
+        return [{"params": self.corpo.parameters(), "lr": lr_backbone},
+                {"params": self.saida.parameters(), "lr": lr_cabeca}]
+
+
 # ----------------------------------------------------------------------------- fábrica
 
 # Configuração de espectrograma de cada modelo (nome da pasta em dados/espectrogramas/).
-ENTRADA = {"M1": "mel128_32k", "M2": "mel128_32k", "M3": "mel64_32k", "M4": "ast_emb"}
+ENTRADA = {"M1": "mel128_32k", "M2": "mel128_32k", "M3": "mel64_32k", "M4": "ast_emb", "M5": "mel128_32k"}
 
 
 def criar(nome: str, n_classes: int, pretreinado: bool = True) -> nn.Module:
@@ -234,6 +272,8 @@ def criar(nome: str, n_classes: int, pretreinado: bool = True) -> nn.Module:
         return Cnn14(n_classes, pretreinado=pretreinado)
     if nome == "M4":
         return CabecaLinear(n_classes)
+    if nome == "M5":
+        return CNNImagem(n_classes, pretreinado=pretreinado)
     raise ValueError(f"modelo desconhecido: {nome}")
 
 

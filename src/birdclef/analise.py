@@ -43,6 +43,7 @@ def vazamento_autor(arquivos_teste: pd.Index, y: np.ndarray, probs_por_modelo: d
 
 @torch.no_grad()
 def embeddings(modelo, X, idx: np.ndarray, norm, lote: int = 128) -> np.ndarray:
+    lote = min(lote, getattr(modelo, "lote_inferencia", lote))  # M3: ver treino.prever_janelas
     modelo.eval()
     disp = next(modelo.parameters()).device
     media, desvio = norm

@@ -273,3 +273,14 @@ lightning_logs/
 !checkpoints/M1_*.pt
 !checkpoints/M2_*.pt
 !checkpoints/M4_*.pt
+
+# Parte 2: pesos finais reutilizáveis (checkpoints/finais/). Entram os JSONs de metadados e os
+# pesos leves (M1, M2, M4 e as cabeças/variantes pequenas); o M3 (CNN14, ~320 MB) e o AST ficam
+# fora: o README explica como baixar os pré-treinados e recriar os finais.
+!checkpoints/finais/
+checkpoints/finais/*
+!checkpoints/finais/*.json
+!checkpoints/finais/M1*.pt
+!checkpoints/finais/M2*.pt
+!checkpoints/finais/M4*.pt
+!checkpoints/finais/M5*.pt

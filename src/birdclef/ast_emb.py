@@ -32,10 +32,18 @@ from birdclef import aumento, dados, preproc
 MODELO_AST = "MIT/ast-finetuned-audioset-10-10-0.4593"
 
 
+def pasta_cache_ast():
+    """Cache do Hugging Face dentro do repositório (`checkpoints/pretreinados/hf/`, fora do git),
+    em vez de `~/.cache/huggingface`: todos os pesos baixados ficam junto do projeto."""
+    from birdclef.modelos import pasta_pretreinados
+    return pasta_pretreinados() / "hf"
+
+
 def carregar_ast(disp: torch.device):
     from transformers import ASTFeatureExtractor, ASTModel
-    extrator = ASTFeatureExtractor.from_pretrained(MODELO_AST)
-    modelo = ASTModel.from_pretrained(MODELO_AST).to(disp).eval()
+    cache = pasta_cache_ast()
+    extrator = ASTFeatureExtractor.from_pretrained(MODELO_AST, cache_dir=cache)
+    modelo = ASTModel.from_pretrained(MODELO_AST, cache_dir=cache).to(disp).eval()
     if disp.type == "cuda":
         modelo = modelo.half()
     return extrator, modelo

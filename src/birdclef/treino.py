@@ -12,6 +12,12 @@ Parte 2 (sem mudar o comportamento do M1):
 - `ConfigTreino.lr_backbone`: taxa de aprendizado menor para o corpo pré-treinado (M3);
 - `indices(..., fracao=)`: usa só uma fração das gravações de treino, estratificada por espécie e
   aninhada (as 25% estão dentro das 50%), para o E4 (eficiência de dados).
+
+Melhorias testadas no E5 (desligadas por padrão, então E1-E4 não mudam):
+
+- `ConfigTreino.suavizacao`: *label smoothing* (rótulo-alvo vira (1 - s) no correto e s/C no resto);
+- `ConfigTreino.epocas_cabeca`: ajuste fino em duas fases; nas primeiras épocas só a camada nova
+  (`saida`) treina, com o corpo pré-treinado congelado, e depois o modelo todo.
 """
 
 from dataclasses import dataclass, field
@@ -39,6 +45,8 @@ class ConfigTreino:
     semente: int = 42
     lr_backbone: float | None = None  # só modelos com `grupos_parametros` (M3)
     fracao_treino: float = 1.0        # E4: fração das gravações de treino usadas
+    suavizacao: float = 0.0           # E5: label smoothing
+    epocas_cabeca: int = 0            # E5: épocas iniciais com o corpo congelado (só a `saida` treina)
 
 
 @dataclass
@@ -80,16 +88,70 @@ def matriz_confusao(y: np.ndarray, probs: np.ndarray, n_classes: int) -> np.ndar
     return confusion_matrix(y, probs.argmax(1), labels=range(n_classes))
 
 
+# ----------------------------------------------------------------------------- dados na GPU
+
+GB = 2 ** 30
+
+
+class XNaGPU:
+    """Linhas de `X` (log-Mel em float16) copiadas para a VRAM, indexadas pelo índice global.
+
+    Otimização da Parte 2 (sem efeito nos números: os mesmos valores float16 viram float32, só que
+    na GPU). Na máquina de 7,7 GB de RAM, manter `X` inteiro em memória (1,9 GB) junto com o
+    contexto CUDA levava o Windows a comprimir páginas, e o sorteio de lotes na CPU deixava a GPU
+    ociosa: ~65 s por época do M1 contra ~20 s na Parte 1. Com as linhas de treino e validação na
+    VRAM, cada lote é indexado direto na GPU. A cópia é feita em blocos a partir do `X` mapeado do
+    disco, sem duplicar `X` na RAM.
+    """
+
+    def __init__(self, X, linhas: np.ndarray, disp: torch.device, bloco: int = 1024):
+        linhas = np.sort(np.asarray(linhas))
+        self.pos = np.full(len(X), -1, dtype=np.int64)
+        self.pos[linhas] = np.arange(len(linhas))
+        self.dados = torch.empty((len(linhas), *X.shape[1:]), dtype=torch.float16, device=disp)
+        for i in range(0, len(linhas), bloco):
+            self.dados[i:i + bloco] = torch.from_numpy(np.asarray(X[linhas[i:i + bloco]], dtype=np.float16)).to(disp)
+        self.shape = X.shape
+        self.disp = disp
+
+    def lote(self, idx: np.ndarray) -> torch.Tensor:
+        p = self.pos[idx]
+        assert (p >= 0).all(), "índice fora das linhas copiadas para a GPU"
+        return self.dados[torch.from_numpy(p).to(self.disp)].float()
+
+
+def lote_tensor(X, idx: np.ndarray, disp: torch.device) -> torch.Tensor:
+    """Lote de `X` como float32 em `disp`, venha `X` de um `XNaGPU` ou de um array/memmap."""
+    if isinstance(X, XNaGPU):
+        return X.lote(idx)
+    return torch.from_numpy(np.asarray(X[idx], dtype=np.float32)).to(disp, non_blocking=True)
+
+
+def cabe_na_gpu(X, linhas: np.ndarray, modelo, disp: torch.device) -> bool:
+    """Se as `linhas` de `X` cabem na VRAM livre, deixando a folga que o treino do modelo pede
+    (`modelo.vram_treino_gb`, padrão 1,3 GB: M1/M2 com lote 64)."""
+    if disp.type != "cuda":
+        return False
+    livre, _ = torch.cuda.mem_get_info()
+    precisa = len(linhas) * int(np.prod(X.shape[1:])) * 2
+    return precisa + getattr(modelo, "vram_treino_gb", 1.3) * GB < livre
+
+
 # ----------------------------------------------------------------------------- predição
 
 @torch.no_grad()
 def prever_janelas(modelo, X, idx: np.ndarray, norm, lote: int = 256) -> np.ndarray:
+    # Correção (Parte 2, GPU de 4 GB): o lote de inferência era fixo em 256. Para o CNN14 (M3)
+    # isso pede ~4,2 GiB de VRAM só na passagem direta, mais que a GPU tem: no Windows o driver
+    # transborda para a memória compartilhada (fica dezenas de vezes mais lento) ou dá OOM.
+    # Modelos grandes declaram `lote_inferencia` (M3: 32, pico ~1,5 GiB); os demais seguem com 256.
+    lote = min(lote, getattr(modelo, "lote_inferencia", lote))
     modelo.eval()
     disp = next(modelo.parameters()).device
     media, desvio = norm
     saidas = []
     for i in range(0, len(idx), lote):
-        x = torch.from_numpy(np.asarray(X[idx[i:i + lote]], dtype=np.float32)).to(disp)
+        x = lote_tensor(X, idx[i:i + lote], disp)
         with torch.autocast(disp.type, enabled=disp.type == "cuda"):
             saidas.append(torch.softmax(modelo((x - media) / desvio).float(), 1).cpu().numpy())
     return np.concatenate(saidas) if saidas else np.empty((0, 0))
@@ -149,8 +211,9 @@ def treinar(
 ) -> Resultado:
     """Treina um modelo com o fold `fold_val` como validação e os demais folds de treino.
 
-    `X` deve estar em memória (np.ndarray) para o sorteio de lotes ser rápido. `R` são os log-Mel
-    dos ruídos de treino, obrigatórios se `cfg_aum.ruido`.
+    `X` pode ser um array ou um memmap; se as linhas de treino e validação couberem na VRAM, são
+    copiadas para lá (`XNaGPU`) e os lotes saem direto da GPU. `R` são os log-Mel dos ruídos de
+    treino, obrigatórios se `cfg_aum.ruido`.
     """
     fixar_semente(cfg.semente)
     disp = dispositivo()
@@ -174,16 +237,31 @@ def treinar(
     agenda = torch.optim.lr_scheduler.CosineAnnealingLR(otim, T_max=cfg.epocas)
     escala = torch.amp.GradScaler(enabled=disp.type == "cuda")
 
+    linhas = np.concatenate([idx_tr, idx_val])
+    Xt = XNaGPU(X, linhas, disp) if cabe_na_gpu(X, linhas, modelo, disp) else X
+    if verbose:
+        print(f"dados de treino/validação {'na GPU' if isinstance(Xt, XNaGPU) else 'na CPU (memmap)'}", flush=True)
+
     melhor, melhor_estado, sem_melhora, hist = -1.0, None, 0, []
     inicio = time.time()
+    def congelar_corpo(congelado: bool) -> None:
+        cabeca = {id(p) for p in modelo.saida.parameters()}
+        for p in modelo.parameters():
+            if id(p) not in cabeca:
+                p.requires_grad_(not congelado)
+
     for epoca in range(1, cfg.epocas + 1):
+        if cfg.epocas_cabeca:
+            congelar_corpo(epoca <= cfg.epocas_cabeca)
         modelo.train()
         sorteio = idx_tr[torch.multinomial(pesos, len(idx_tr), replacement=True).numpy()]
         perda_total = 0.0
         for i in range(0, len(sorteio), cfg.lote):
             lote = sorteio[i:i + cfg.lote]
-            x = torch.from_numpy(X[lote].astype(np.float32)).to(disp, non_blocking=True)
+            x = lote_tensor(Xt, lote, disp)
             y = F.one_hot(torch.from_numpy(alvo[lote]), len(classes)).float().to(disp)
+            if cfg.suavizacao:
+                y = y * (1 - cfg.suavizacao) + cfg.suavizacao / len(classes)
 
             if cfg_aum.ruido:
                 com_ruido = torch.rand(len(lote), device=disp) < cfg_aum.prob_ruido
@@ -207,11 +285,11 @@ def treinar(
             perda_total += perda.item() * len(lote)
         agenda.step()
 
-        probs, y_val, _ = prever_gravacoes(modelo, X, janelas, idx_val, norm, classes)
+        probs, y_val, _ = prever_gravacoes(modelo, Xt, janelas, idx_val, norm, classes)
         m = metricas(y_val, probs)
         hist.append({"epoca": epoca, "perda": perda_total / len(sorteio), **m})
         if verbose:
-            print(f"época {epoca:2d}  perda {hist[-1]['perda']:.3f}  F1 val {m['f1_macro']:.3f}  top1 {m['acc_top1']:.3f}")
+            print(f"época {epoca:2d}  perda {hist[-1]['perda']:.3f}  F1 val {m['f1_macro']:.3f}  top1 {m['acc_top1']:.3f}  ({time.time() - inicio:.0f} s)", flush=True)
         if m["f1_macro"] > melhor:
             melhor, sem_melhora = m["f1_macro"], 0
             melhor_estado = {k: v.detach().clone() for k, v in modelo.state_dict().items()}
@@ -221,6 +299,8 @@ def treinar(
                 break
 
     modelo.load_state_dict(melhor_estado)
+    del Xt
+    torch.cuda.empty_cache()
     historico = pd.DataFrame(hist)
     metricas_val = historico.loc[historico["f1_macro"].idxmax()].to_dict()
     return Resultado(modelo, classes, norm, historico, metricas_val, time.time() - inicio)

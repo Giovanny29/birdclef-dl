@@ -3,8 +3,14 @@
 from pathlib import Path
 import json
 
+import sys
+
 import matplotlib
-matplotlib.use("Agg")
+# Correção (Parte 2): `matplotlib.use("Agg")` incondicional desligava as figuras inline de todo
+# notebook que importasse este módulo (o 04 mostra figuras próprias depois do import). Agg só
+# fora do Jupyter, para gerar PNGs pela linha de comando sem janela.
+if "ipykernel" not in sys.modules:
+    matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
@@ -126,7 +132,8 @@ def todas():
 
 # ============================================================================= Parte 2
 
-NOMES_MODELOS = {"M1": "M1 CNN", "M2": "M2 CRNN", "M3": "M3 PANNs CNN14", "M4": "M4 AST (linear)"}
+NOMES_MODELOS = {"M1": "M1 CNN", "M2": "M2 CRNN", "M3": "M3 PANNs CNN14", "M4": "M4 AST (linear)",
+                 "M5": "M5 EfficientNet-B0"}
 COR_MODELO = dict(zip(NOMES_MODELOS, SERIES))
 
 
@@ -233,6 +240,69 @@ def todas_parte2():
         e3b_linhas(pd.read_csv(PASTA_RESULTADOS / "e3b" / "e3b_execucoes.csv"))
     if (PASTA_RESULTADOS / "e4" / "e4_execucoes.csv").exists():
         e4_curva(pd.read_csv(PASTA_RESULTADOS / "e4" / "e4_execucoes.csv"))
+
+
+# ----------------------------------------------------------------------------- figuras extras (notebooks 04 e 05)
+
+def entradas(x128: np.ndarray, x64: np.ndarray, emb: np.ndarray, titulo: str, caminho: Path):
+    """A mesma janela de 5 s nas três entradas: log-Mel 128 × 313 (M1, M2), 64 × 501 (M3) e o
+    embedding de 768 dimensões do AST (M4)."""
+    fig, ax = plt.subplots(1, 3, figsize=(14, 3.2), gridspec_kw={"width_ratios": [1, 1, 1.1]})
+    for a, x, nome in ((ax[0], x128, "log-Mel 128 bandas, hop 16 ms (M1, M2)"), (ax[1], x64, "log-Mel 64 bandas, hop 10 ms (M3)")):
+        im = a.imshow(x.astype(np.float32), origin="lower", aspect="auto", cmap="magma", extent=[0, 5, 0, x.shape[0]])
+        a.set_xlabel("tempo (s)"); a.set_ylabel("banda Mel"); a.set_title(nome); a.grid(False)
+        fig.colorbar(im, ax=a, fraction=0.046, label="potência (dB)")
+    ax[2].plot(emb.astype(np.float32), color=SERIES[3], lw=0.7)
+    ax[2].set_xlabel("dimensão do embedding"); ax[2].set_ylabel("valor")
+    ax[2].set_title("embedding do AST congelado, 768 dim. (M4)")
+    fig.suptitle(titulo, color=TEXTO)
+    _salvar(fig, caminho)
+
+
+def f1_especies(f1e: pd.DataFrame, caminho: Path, titulo: str):
+    """Mapa de calor do F1 por espécie (linhas) e modelo (colunas), espécies da pior à melhor."""
+    f1e = f1e.loc[f1e.mean(1).sort_values().index]
+    fig, ax = plt.subplots(figsize=(1.3 * f1e.shape[1] + 4, 0.32 * len(f1e) + 1.2))
+    im = ax.imshow(f1e.to_numpy(), cmap=AZUIS, vmin=0.4, vmax=1, aspect="auto")
+    ax.set_xticks(range(f1e.shape[1]), f1e.columns); ax.set_yticks(range(len(f1e)), f1e.index, fontsize=8)
+    ax.grid(False)
+    for i in range(len(f1e)):
+        for j in range(f1e.shape[1]):
+            v = f1e.iat[i, j]
+            ax.text(j, i, f"{v:.2f}", ha="center", va="center", fontsize=7, color="white" if v > 0.8 else TEXTO)
+    fig.colorbar(im, ax=ax, fraction=0.04, label="F1 (teste)")
+    ax.set_title(titulo)
+    _salvar(fig, caminho)
+
+
+def e5_barras(df: pd.DataFrame, caminho: Path):
+    """E5: diferença de F1-macro de validação de cada técnica contra o baseline do E1."""
+    d = df.dropna(subset=["dif_val"]).copy()
+    d["rotulo"] = d["modelo"].astype(str) + ": " + d["tecnica"].astype(str)
+    d = d.sort_values("dif_val")
+    fig, ax = plt.subplots(figsize=(8, 0.38 * len(d) + 1.2))
+    cores = [SERIES[2] if v > 0 else SERIES[1] for v in d["dif_val"]]
+    ax.barh(range(len(d)), d["dif_val"] * 100, color=cores)
+    ax.set_yticks(range(len(d)), d["rotulo"], fontsize=8)
+    ax.axvline(0, color=TEXTO_2, lw=1)
+    for i, v in enumerate(d["dif_val"] * 100):
+        ax.text(v + (0.05 if v >= 0 else -0.05), i, f"{v:+.1f}", va="center", ha="left" if v >= 0 else "right", fontsize=8)
+    ax.set_xlabel("diferença de F1-macro na validação do fold 0 (pontos percentuais)")
+    ax.set_title("E5: cada técnica contra o baseline equivalente do E1")
+    ax.grid(axis="y", visible=False)
+    _salvar(fig, caminho)
+
+
+def confiabilidade(curvas: dict, caminho: Path, titulo: str):
+    """Curvas de confiabilidade (confiança do top-1 x acurácia), uma por versão do modelo."""
+    fig, ax = plt.subplots(figsize=(4.8, 4.4))
+    ax.plot([0, 1], [0, 1], color=TEXTO_2, lw=1, ls="--", label="calibração perfeita")
+    for cor, (nome, c) in zip(SERIES, curvas.items()):
+        ax.plot(c["confianca"], c["acuracia"], color=cor, marker="o", ms=4, lw=2, label=nome)
+    ax.set_xlabel("confiança média do top-1"); ax.set_ylabel("acurácia observada")
+    ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.legend(frameon=False, fontsize=8, loc="upper left")
+    ax.set_title(titulo)
+    _salvar(fig, caminho)
 
 
 if __name__ == "__main__":

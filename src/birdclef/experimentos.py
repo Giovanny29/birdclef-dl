@@ -30,12 +30,18 @@ FOLD_VAL = 0
 
 
 def carregar_dados(cfg_mel=preproc.MEL128_32K):
-    """`X` em memória, índice das janelas e log-Mel dos ruídos de treino (`None` se não houver,
-    caso dos embeddings do AST)."""
+    """`X` (mapeado do disco), índice das janelas e log-Mel dos ruídos de treino (`None` se não
+    houver, caso dos embeddings do AST).
+
+    Mudança da Parte 2: `X` não é mais copiado inteiro para a RAM (`np.ascontiguousarray`). Numa
+    máquina de 7,7 GB isso, somado ao contexto CUDA, esgotava a memória e deixava o treino 3x mais
+    lento; agora `treino.treinar` copia as linhas de treino/validação para a GPU quando cabem
+    (`treino.XNaGPU`) e, quando não cabem (M3), lê os lotes do memmap. Os valores são os mesmos.
+    """
     X, janelas = preproc.carregar(cfg_mel)
     caminho_r = preproc.pasta_config(cfg_mel) / "R.npy"
     R = np.load(caminho_r) if caminho_r.exists() else None
-    return np.ascontiguousarray(X), janelas, R
+    return X, janelas, R
 
 
 def dados_teste(X, janelas):
