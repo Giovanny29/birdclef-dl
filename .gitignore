@@ -271,3 +271,5 @@ lightning_logs/
 # BirdCLEF (divisoes.csv, janelas.csv) continuam fora, pois são regeneráveis pelos notebooks.
 !resultados/**/*.npy
 !checkpoints/M1_*.pt
+!checkpoints/M2_*.pt
+!checkpoints/M4_*.pt

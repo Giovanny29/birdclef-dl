@@ -6,6 +6,12 @@
   aprendizado; precisão mista na GPU.
 - Parada antecipada pelo F1-macro de validação, medido por gravação.
 - Predição de uma gravação: média das probabilidades das suas janelas.
+
+Parte 2 (sem mudar o comportamento do M1):
+
+- `ConfigTreino.lr_backbone`: taxa de aprendizado menor para o corpo pré-treinado (M3);
+- `indices(..., fracao=)`: usa só uma fração das gravações de treino, estratificada por espécie e
+  aninhada (as 25% estão dentro das 50%), para o E4 (eficiência de dados).
 """
 
 from dataclasses import dataclass, field
@@ -31,6 +37,8 @@ class ConfigTreino:
     lr: float = 1e-3
     weight_decay: float = 1e-4
     semente: int = 42
+    lr_backbone: float | None = None  # só modelos com `grupos_parametros` (M3)
+    fracao_treino: float = 1.0        # E4: fração das gravações de treino usadas
 
 
 @dataclass
@@ -99,9 +107,27 @@ def prever_gravacoes(modelo, X, janelas: pd.DataFrame, idx: np.ndarray, norm, cl
 
 # ----------------------------------------------------------------------------- treino
 
-def indices(janelas: pd.DataFrame, fold_val: int) -> tuple[np.ndarray, np.ndarray]:
+def gravacoes_fracao(janelas: pd.DataFrame, gravacoes: np.ndarray, fracao: float, semente: int = 42) -> set:
+    """Fração `fracao` das `gravacoes`, por espécie, em ordem aleatória fixa.
+
+    Como a ordem não depende da fração, os subconjuntos são aninhados (25% ⊂ 50% ⊂ 100%), e são os
+    mesmos para todos os modelos: a comparação do E4 muda só a quantidade de dados.
+    """
+    rotulo = janelas.drop_duplicates("filename").set_index("filename")["primary_label"]
+    df = pd.DataFrame({"filename": gravacoes, "especie": rotulo.loc[gravacoes].to_numpy()})
+    df["ordem"] = np.random.default_rng(semente).permutation(len(df))
+    df = df.sort_values(["especie", "ordem"])
+    escolhidas = df.groupby("especie", group_keys=False).apply(
+        lambda g: g.head(max(1, int(round(fracao * len(g))))))
+    return set(escolhidas["filename"])
+
+
+def indices(janelas: pd.DataFrame, fold_val: int, fracao: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
     treino = (janelas["particao"] == "treino") & (janelas["fold"] != fold_val)
     val = (janelas["particao"] == "treino") & (janelas["fold"] == fold_val)
+    if fracao < 1.0:
+        manter = gravacoes_fracao(janelas, janelas.loc[treino, "filename"].unique(), fracao)
+        treino &= janelas["filename"].isin(manter)
     return np.flatnonzero(treino.to_numpy()), np.flatnonzero(val.to_numpy())
 
 
@@ -130,7 +156,7 @@ def treinar(
     disp = dispositivo()
     classes = sorted(janelas["primary_label"].unique())
     alvo = janelas["primary_label"].map({c: i for i, c in enumerate(classes)}).to_numpy()
-    idx_tr, idx_val = indices(janelas, fold_val)
+    idx_tr, idx_val = indices(janelas, fold_val, cfg.fracao_treino)
     norm = estatisticas(X, idx_tr)
     media, desvio = norm
 
@@ -138,8 +164,13 @@ def treinar(
     pesos = torch.tensor(1.0 / janelas_por_grav, dtype=torch.double)
     R_t = torch.from_numpy(np.asarray(R, dtype=np.float32)).to(disp) if cfg_aum.ruido else None
 
+    torch.backends.cudnn.benchmark = True
     modelo = modelos.criar(cfg.modelo, len(classes)).to(disp)
-    otim = torch.optim.AdamW(modelo.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    if cfg.lr_backbone is not None and hasattr(modelo, "grupos_parametros"):
+        params = modelo.grupos_parametros(cfg.lr_backbone, cfg.lr)
+    else:
+        params = modelo.parameters()
+    otim = torch.optim.AdamW(params, lr=cfg.lr, weight_decay=cfg.weight_decay)
     agenda = torch.optim.lr_scheduler.CosineAnnealingLR(otim, T_max=cfg.epocas)
     escala = torch.amp.GradScaler(enabled=disp.type == "cuda")
 

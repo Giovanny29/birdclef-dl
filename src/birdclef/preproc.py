@@ -48,9 +48,22 @@ class ConfigMel:
         return 1 + self.amostras_janela // self.hop
 
 
-# M1 e M2. As configurações do PANNs (64 bandas a 32 kHz) e do AST (128 bandas a 16 kHz) são da
-# Parte 2 e usam a mesma função com outro ConfigMel.
+# M1 e M2.
 MEL128_32K = ConfigMel()
+
+# M3 (PANNs CNN14): a configuração original do PANNs (32 kHz, n_fft 1024, hop 320, 64 bandas,
+# 50-14000 Hz -> 64 × 501). As janelas (duração, passo, limiar de energia, máximo por gravação)
+# são as mesmas do MEL128_32K e o recorte depende só da forma de onda a 32 kHz, então as janelas
+# saem idênticas, na mesma ordem: os modelos são comparados exatamente nas mesmas amostras
+# (conferido no notebook 04).
+MEL64_32K = ConfigMel(nome="mel64_32k", n_mels=64, n_fft=1024, hop=320)
+
+# M4 (AST): não é um log-Mel, e sim o embedding de 768 dimensões do AST congelado, calculado em
+# `birdclef.ast_emb` a 16 kHz sobre as mesmas janelas do MEL128_32K. A configuração só serve para
+# localizar a pasta (`dados/espectrogramas/ast_emb/`) e carregar com `carregar`.
+AST_EMB = ConfigMel(nome="ast_emb", sr=16000, n_mels=128)
+
+CONFIGS = {c.nome: c for c in (MEL128_32K, MEL64_32K, AST_EMB)}
 
 
 def log_mel(sinal: np.ndarray, cfg: ConfigMel) -> np.ndarray:

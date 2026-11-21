@@ -1,4 +1,5 @@
-"""Experimentos da Parte 1 com o M1 (CNN do zero).
+"""Experimentos da Parte 1 com o M1 (CNN do zero). Os da Parte 2 (E1, E4 e a extensão do E2/E3
+aos outros modelos) estão em `birdclef.experimentos_p2`, que reaproveita estas funções.
 
 - E2 (ablação do aumento): cada configuração de `aumento.CONFIGS_E2`, 3 sementes, fold 0 de
   validação; avaliada na validação e no teste limpo.
@@ -29,9 +30,11 @@ FOLD_VAL = 0
 
 
 def carregar_dados(cfg_mel=preproc.MEL128_32K):
-    """`X` em memória, índice das janelas e log-Mel dos ruídos de treino."""
+    """`X` em memória, índice das janelas e log-Mel dos ruídos de treino (`None` se não houver,
+    caso dos embeddings do AST)."""
     X, janelas = preproc.carregar(cfg_mel)
-    R = np.load(preproc.pasta_config(cfg_mel) / "R.npy")
+    caminho_r = preproc.pasta_config(cfg_mel) / "R.npy"
+    R = np.load(caminho_r) if caminho_r.exists() else None
     return np.ascontiguousarray(X), janelas, R
 
 
@@ -46,7 +49,7 @@ def nome_execucao(modelo: str, aum: str, semente: int, fold: int = FOLD_VAL) -> 
 
 def carregar_checkpoint(caminho: Path, modelo: str = "M1") -> Resultado:
     ck = torch.load(caminho, map_location=treino.dispositivo(), weights_only=False)
-    m = modelos.criar(modelo, len(ck["classes"])).to(treino.dispositivo())
+    m = modelos.criar(modelo, len(ck["classes"]), pretreinado=False).to(treino.dispositivo())
     m.load_state_dict(ck["estado"])
     return Resultado(m, ck["classes"], tuple(ck["norm"]), pd.DataFrame(ck["historico"]), ck["metricas_val"], ck["segundos"])
 
@@ -112,11 +115,14 @@ def e3(janelas, sementes=SEMENTES, modelo="M1", configs=("sem", "todas")) -> pd.
     return df
 
 
-if __name__ == "__main__":
-    qual = sys.argv[1] if len(sys.argv) > 1 else "tudo"
+def main_parte1(qual: str = "tudo"):
     X, janelas, R = carregar_dados()
     print(f"X {X.shape}, {modelos.n_parametros(modelos.criar('M1', janelas['primary_label'].nunique())):,} parâmetros", flush=True)
     if qual in ("e2", "tudo"):
         e2(X, janelas, R)
     if qual in ("e3", "tudo"):
         e3(janelas)
+
+
+if __name__ == "__main__":
+    main_parte1(sys.argv[1] if len(sys.argv) > 1 else "tudo")
