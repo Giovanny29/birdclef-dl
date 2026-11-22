@@ -66,7 +66,7 @@ def aumento_de(modelo: str, nome: str) -> aumento.ConfigAumento:
     fração do espectro e o mesmo tempo que no M1: 16 → 8 bandas, 40 → 64 quadros (~0,64 s).
     O M4 recebe embeddings fixos e não tem aumento.
     """
-    if modelo == "M4":
+    if modelo.startswith("M4"):  # M4 e M4FT (E5.6): entrada sem eixo (bandas, quadros) do log-Mel
         return aumento.SEM
     cfg = aumento.CONFIGS_E2[nome]
     if modelo == "M3":
@@ -75,7 +75,7 @@ def aumento_de(modelo: str, nome: str) -> aumento.ConfigAumento:
 
 
 def nome_aumento_e1(modelo: str) -> str:
-    return "sem" if modelo == "M4" else "todas"
+    return "sem" if modelo.startswith("M4") else "todas"
 
 
 def nome_execucao(modelo: str, aum: str, semente: int, fold: int, fracao: float = 1.0) -> str:

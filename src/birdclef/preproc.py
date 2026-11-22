@@ -63,7 +63,11 @@ MEL64_32K = ConfigMel(nome="mel64_32k", n_mels=64, n_fft=1024, hop=320)
 # localizar a pasta (`dados/espectrogramas/ast_emb/`) e carregar com `carregar`.
 AST_EMB = ConfigMel(nome="ast_emb", sr=16000, n_mels=128)
 
-CONFIGS = {c.nome: c for c in (MEL128_32K, MEL64_32K, AST_EMB)}
+# E5.6 (ajuste fino parcial do AST): fbank de 128 bandas do extrator do AST, guardado como
+# (quadros, bandas); gerado em `birdclef.ast_ft`.
+AST_FBANK = ConfigMel(nome="ast_fbank", sr=16000, n_mels=128)
+
+CONFIGS = {c.nome: c for c in (MEL128_32K, MEL64_32K, AST_EMB, AST_FBANK)}
 
 
 def log_mel(sinal: np.ndarray, cfg: ConfigMel) -> np.ndarray:

@@ -229,6 +229,11 @@ def treinar(
 
     torch.backends.cudnn.benchmark = True
     modelo = modelos.criar(cfg.modelo, len(classes)).to(disp)
+    if getattr(modelo, "entrada_normalizada", False):
+        # entrada já normalizada na origem (fbank do extrator do AST, E5.6): não renormalizar,
+        # senão o modelo pré-treinado recebe uma distribuição diferente da do pré-treino
+        norm = (0.0, 1.0)
+        media, desvio = norm
     if cfg.lr_backbone is not None and hasattr(modelo, "grupos_parametros"):
         params = modelo.grupos_parametros(cfg.lr_backbone, cfg.lr)
     else:

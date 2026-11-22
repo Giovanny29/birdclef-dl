@@ -258,7 +258,8 @@ class CNNImagem(nn.Module):
 # ----------------------------------------------------------------------------- fábrica
 
 # Configuração de espectrograma de cada modelo (nome da pasta em dados/espectrogramas/).
-ENTRADA = {"M1": "mel128_32k", "M2": "mel128_32k", "M3": "mel64_32k", "M4": "ast_emb", "M5": "mel128_32k"}
+ENTRADA = {"M1": "mel128_32k", "M2": "mel128_32k", "M3": "mel64_32k", "M4": "ast_emb", "M5": "mel128_32k",
+           "M4FT": "ast_fbank"}
 
 
 def criar(nome: str, n_classes: int, pretreinado: bool = True) -> nn.Module:
@@ -274,6 +275,9 @@ def criar(nome: str, n_classes: int, pretreinado: bool = True) -> nn.Module:
         return CabecaLinear(n_classes)
     if nome == "M5":
         return CNNImagem(n_classes, pretreinado=pretreinado)
+    if nome == "M4FT":  # E5.6: AST com os 2 últimos blocos treináveis
+        from birdclef.ast_ft import ASTParcial
+        return ASTParcial(n_classes, pretreinado=pretreinado)
     raise ValueError(f"modelo desconhecido: {nome}")
 
 
