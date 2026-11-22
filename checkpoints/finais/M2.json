@@ -1,0 +1,121 @@
+{
+  "nome": "M2",
+  "modelo": "M2",
+  "descricao": "E1, fold 0",
+  "arquivo": "M2.pt",
+  "origem": "checkpoints/M2_todas_s42_f0.pt",
+  "parametros": 374644,
+  "classes": [
+    "banana",
+    "blbgra1",
+    "bobfly1",
+    "bubwre1",
+    "butsal1",
+    "compau",
+    "greegr",
+    "grekis",
+    "roahaw",
+    "sobtyr1",
+    "socfly1",
+    "soulap1",
+    "strcuc1",
+    "strfly1",
+    "trokin",
+    "tropar",
+    "wbwwre1",
+    "whtdov",
+    "yeofly1",
+    "yercac1"
+  ],
+  "nomes_comuns": {
+    "banana": "Bananaquit",
+    "blbgra1": "Blue-black Grassquit",
+    "bobfly1": "Boat-billed Flycatcher",
+    "bubwre1": "Buff-breasted Wren",
+    "butsal1": "Buff-throated Saltator",
+    "compau": "Common Pauraque",
+    "greegr": "Great Egret",
+    "grekis": "Great Kiskadee",
+    "roahaw": "Roadside Hawk",
+    "sobtyr1": "Southern Beardless-Tyrannulet",
+    "socfly1": "Social Flycatcher",
+    "soulap1": "Southern Lapwing",
+    "strcuc1": "Striped Cuckoo",
+    "strfly1": "Streaked Flycatcher",
+    "trokin": "Tropical Kingbird",
+    "tropar": "Tropical Parula",
+    "wbwwre1": "White-breasted Wood-Wren",
+    "whtdov": "White-tipped Dove",
+    "yeofly1": "Yellow-olive Flycatcher",
+    "yercac1": "Yellow-rumped Cacique"
+  },
+  "normalizacao": {
+    "media": -31.14886474609375,
+    "desvio": 16.03484344482422,
+    "como": "x_norm = (entrada - media) / desvio, estatísticas globais do treino"
+  },
+  "config_entrada": {
+    "nome": "mel128_32k",
+    "sr": 32000,
+    "n_mels": 128,
+    "fmin": 50.0,
+    "fmax": 14000.0,
+    "n_fft": 2048,
+    "hop": 512,
+    "duracao_janela": 5.0,
+    "passo_janela": 2.5,
+    "max_janelas": 12,
+    "limiar_db": 20.0
+  },
+  "janelas": {
+    "sr": 32000,
+    "duracao_janela": 5.0,
+    "passo_janela": 2.5,
+    "max_janelas": 12,
+    "limiar_db": 20.0
+  },
+  "agregacao": "média das probabilidades das janelas da gravação",
+  "hiperparametros": {
+    "treino": {
+      "modelo": "M2",
+      "epocas": 30,
+      "paciencia": 6,
+      "lote": 64,
+      "lr": 0.001,
+      "weight_decay": 0.0001,
+      "semente": 42,
+      "lr_backbone": null,
+      "fracao_treino": 1.0,
+      "suavizacao": 0.0,
+      "epocas_cabeca": 0
+    },
+    "aumento": {
+      "specaugment": true,
+      "mixup": true,
+      "ruido": true,
+      "n_mascaras_freq": 2,
+      "largura_freq": 16,
+      "n_mascaras_tempo": 2,
+      "largura_tempo": 40,
+      "alfa_mixup": 0.4,
+      "prob_ruido": 0.5,
+      "snr_min": 0.0,
+      "snr_max": 20.0
+    }
+  },
+  "metricas_validacao": {
+    "fold": 0,
+    "f1_macro": 0.8475678623117678,
+    "acc_top1": 0.8458333333333333,
+    "acc_top3": 0.9479166666666666,
+    "map": 0.8923192115004749
+  },
+  "metricas_teste": {
+    "f1_macro": 0.8691952276912144,
+    "acc_top1": 0.8666666666666667,
+    "acc_top3": 0.9533333333333334,
+    "map": 0.9327242447002639
+  },
+  "data": "2026-11-22T09:04:17",
+  "uso": "python -m birdclef.inferencia caminho.ogg --modelo M2"
+}

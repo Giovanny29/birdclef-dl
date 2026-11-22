@@ -1,0 +1,92 @@
+{
+  "nome": "ensemble",
+  "modelo": "ensemble",
+  "descricao": "média ponderada das probabilidades por gravação dos modelos finais",
+  "membros": [
+    {
+      "nome": "M1",
+      "peso": 0.35
+    },
+    {
+      "nome": "M2",
+      "peso": 0.1
+    },
+    {
+      "nome": "M3",
+      "peso": 0.55
+    }
+  ],
+  "pesos_escolhidos_em": "validação do fold 0 (grade no simplex, passo 0.05)",
+  "classes": [
+    "banana",
+    "blbgra1",
+    "bobfly1",
+    "bubwre1",
+    "butsal1",
+    "compau",
+    "greegr",
+    "grekis",
+    "roahaw",
+    "sobtyr1",
+    "socfly1",
+    "soulap1",
+    "strcuc1",
+    "strfly1",
+    "trokin",
+    "tropar",
+    "wbwwre1",
+    "whtdov",
+    "yeofly1",
+    "yercac1"
+  ],
+  "nomes_comuns": {
+    "banana": "Bananaquit",
+    "blbgra1": "Blue-black Grassquit",
+    "bobfly1": "Boat-billed Flycatcher",
+    "bubwre1": "Buff-breasted Wren",
+    "butsal1": "Buff-throated Saltator",
+    "compau": "Common Pauraque",
+    "greegr": "Great Egret",
+    "grekis": "Great Kiskadee",
+    "roahaw": "Roadside Hawk",
+    "sobtyr1": "Southern Beardless-Tyrannulet",
+    "socfly1": "Social Flycatcher",
+    "soulap1": "Southern Lapwing",
+    "strcuc1": "Striped Cuckoo",
+    "strfly1": "Streaked Flycatcher",
+    "trokin": "Tropical Kingbird",
+    "tropar": "Tropical Parula",
+    "wbwwre1": "White-breasted Wood-Wren",
+    "whtdov": "White-tipped Dove",
+    "yeofly1": "Yellow-olive Flycatcher",
+    "yercac1": "Yellow-rumped Cacique"
+  },
+  "temperatura": 0.46,
+  "temperatura_escolhida_em": "validação do fold 0 (mínima NLL); p ∝ p^(1/T)",
+  "calibracao": {
+    "ece_validacao": [
+      0.27189735226165096,
+      0.025521746151357074
+    ],
+    "ece_teste": [
+      0.2693634223359234,
+      0.03026508782911477
+    ],
+    "formato": "[sem temperatura, com temperatura]"
+  },
+  "metricas_validacao": {
+    "fold": 0,
+    "f1_macro": 0.9335083225894547,
+    "acc_top1": 0.9333333333333333,
+    "acc_top3": 0.9770833333333333,
+    "map": 0.9573993135395646
+  },
+  "metricas_teste": {
+    "f1_macro": 0.9500711569973811,
+    "acc_top1": 0.95,
+    "acc_top3": 0.985,
+    "map": 0.9758448349390905
+  },
+  "data": "2026-11-22T09:04:56",
+  "uso": "python -m birdclef.inferencia caminho.ogg --modelo ensemble"
+}
