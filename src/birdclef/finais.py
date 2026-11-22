@@ -120,6 +120,11 @@ def salvar_ensemble(membros: list[str], passo: float = 0.05) -> dict:
         if s > melhor + 1e-9 or (abs(s - melhor) < 1e-9 and np.std(w) < np.std(pesos)):
             melhor, pesos = s, w
     classes = json.loads((PASTA_FINAIS / f"{membros[0]}.json").read_text(encoding="utf-8"))["classes"]
+    # temperatura (E5.7): a média de janelas, de modelos e o mixup deixam o ensemble pouco confiante
+    # (diz ~70% quando acerta ~93%). T é ajustado na mesma validação (mínima NLL) e aplicado na
+    # inferência; só reescala as probabilidades, então não muda a espécie prevista nem o F1.
+    Ev, Et = np.tensordot(pesos, Pv, 1), np.tensordot(pesos, Pt, 1)
+    T = mh.ajustar_temperatura(y_val, Ev)
     info = {
         "nome": "ensemble",
         "modelo": "ensemble",
@@ -128,8 +133,13 @@ def salvar_ensemble(membros: list[str], passo: float = 0.05) -> dict:
         "pesos_escolhidos_em": f"validação do fold 0 (grade no simplex, passo {passo})",
         "classes": classes,
         "nomes_comuns": _nomes_comuns(classes),
-        "metricas_validacao": {"fold": 0, **treino.metricas(y_val, np.tensordot(pesos, Pv, 1))},
-        "metricas_teste": treino.metricas(y_te, np.tensordot(pesos, Pt, 1)),
+        "temperatura": float(T),
+        "temperatura_escolhida_em": "validação do fold 0 (mínima NLL); p ∝ p^(1/T)",
+        "calibracao": {"ece_validacao": [mh.ece(y_val, Ev), mh.ece(y_val, mh.com_temperatura(Ev, T))],
+                       "ece_teste": [mh.ece(y_te, Et), mh.ece(y_te, mh.com_temperatura(Et, T))],
+                       "formato": "[sem temperatura, com temperatura]"},
+        "metricas_validacao": {"fold": 0, **treino.metricas(y_val, Ev)},
+        "metricas_teste": treino.metricas(y_te, Et),
         "data": datetime.now().isoformat(timespec="seconds"),
         "uso": "python -m birdclef.inferencia caminho.ogg --modelo ensemble",
     }

@@ -18,7 +18,9 @@ A inferência repete exatamente o caminho do treino e da avaliação:
    embedding de 768 dimensões do AST congelado (M4, mesmos inícios, a 16 kHz);
 3. a entrada é padronizada com a média e o desvio do treino gravados no JSON;
 4. a probabilidade da gravação é a média das probabilidades das janelas; no ensemble, a média
-   ponderada das probabilidades dos modelos (pesos escolhidos na validação, no JSON do ensemble).
+   ponderada das probabilidades dos modelos (pesos escolhidos na validação, no JSON do ensemble),
+   reescalada pela temperatura de calibração do JSON (p ∝ p^(1/T), E5.7), para que a porcentagem
+   mostrada corresponda à chance real de acerto; a ordem das espécies não muda.
 """
 
 from __future__ import annotations
@@ -119,6 +121,9 @@ def prever_arquivo(caminho: str | Path, modelo: str = "ensemble", top: int = 3) 
             assert m.classes == classes, f"classes de {membro['nome']} diferem das do ensemble"
             probs += membro["peso"] * m.prever(caminho, janelas32, inicios).mean(0)
         probs /= sum(mb["peso"] for mb in info["membros"])
+        T = float(info.get("temperatura", 1.0))
+        probs = np.power(np.clip(probs, 1e-12, 1), 1.0 / T)
+        probs /= probs.sum()
     else:
         m = ModeloFinal(modelo)
         classes, nomes_comuns = m.classes, m.info.get("nomes_comuns", {})

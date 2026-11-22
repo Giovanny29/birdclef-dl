@@ -275,14 +275,14 @@ lightning_logs/
 !checkpoints/M4_*.pt
 
 # Parte 2: pesos finais reutilizáveis (checkpoints/finais/). Entram os JSONs de metadados e os
-# pesos leves (M1, M2, M4 e as cabeças/variantes pequenas); o M3 (CNN14, ~320 MB) e o AST ficam
-# fora: o README explica como baixar os pré-treinados e recriar os finais.
+# pesos leves (M1, M2 e M4, até ~1,6 MB cada); ficam fora o M3 (CNN14, ~320 MB), o M4FT (AST com
+# blocos ajustados, ~345 MB) e o M5 (EfficientNet-B0, ~16 MB): o README explica como baixar os
+# pré-treinados e recriar os finais.
 !checkpoints/finais/
 checkpoints/finais/*
 !checkpoints/finais/*.json
-!checkpoints/finais/M1*.pt
-!checkpoints/finais/M2*.pt
-!checkpoints/finais/M4*.pt
-!checkpoints/finais/M5*.pt
+!checkpoints/finais/M1.pt
+!checkpoints/finais/M2.pt
+!checkpoints/finais/M4.pt
 # Características do M0 (derivadas dos áudios, como os espectrogramas): fora do git
 resultados/e5/caracteristicas_m0.npy
