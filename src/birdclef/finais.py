@@ -30,7 +30,8 @@ from birdclef.inferencia import PASTA_FINAIS
 
 # Variantes do E5 por tipo (nome do checkpoint, descrição). Só entram se o checkpoint existir.
 VARIANTES_E5 = {
-    "M1": [("M1_todas_e50_s42_f0", "50 épocas, paciência 10")],
+    "M1": [("M1_todas_e50_s42_f0", "50 épocas, paciência 10"), ("M1_todas_ls01_s42_f0", "label smoothing 0,1"),
+           ("M1_todas_destil_s42_f0", "destilação do M3"), ("M1PCEN_todas_s42_f0", "PCEN no lugar do log")],
     "M2": [("M2_todas_e50_s42_f0", "50 épocas, paciência 10")],
     "M3": [("M3_todas_2fases_s42_f0", "duas fases (cabeça congelada 2 épocas)"),
            ("M3_todas_ls01_s42_f0", "label smoothing 0,1"),
@@ -75,13 +76,15 @@ def salvar_final(tipo: str, checkpoint: str, descricao: str) -> dict:
     PASTA_FINAIS.mkdir(parents=True, exist_ok=True)
     ck = torch.load(PASTA_CHECKPOINTS / f"{checkpoint}.pt", map_location="cpu", weights_only=False)
     torch.save({"estado": ck["estado"], "classes": ck["classes"], "norm": ck["norm"]}, PASTA_FINAIS / f"{tipo}.pt")
-    p_val, y_val = mh.probs_val(tipo, checkpoint)
-    p_te, y_te = mh.probs_teste(tipo, checkpoint)
-    rede = modelos.criar(tipo, len(ck["classes"]), pretreinado=False)
+    # a arquitetura vem do checkpoint: o final "M1" pode ser, por exemplo, a variante com PCEN
+    arquitetura = (ck.get("treino") or {}).get("modelo", tipo)
+    p_val, y_val = mh.probs_val(arquitetura, checkpoint)
+    p_te, y_te = mh.probs_teste(arquitetura, checkpoint)
+    rede = modelos.criar(arquitetura, len(ck["classes"]), pretreinado=False)
     rede.load_state_dict(ck["estado"])
     info = {
         "nome": tipo,
-        "modelo": tipo,
+        "modelo": arquitetura,
         "descricao": descricao,
         "arquivo": f"{tipo}.pt",
         "origem": f"checkpoints/{checkpoint}.pt",
@@ -90,7 +93,7 @@ def salvar_final(tipo: str, checkpoint: str, descricao: str) -> dict:
         "nomes_comuns": _nomes_comuns(ck["classes"]),
         "normalizacao": {"media": float(ck["norm"][0]), "desvio": float(ck["norm"][1]),
                          "como": "x_norm = (entrada - media) / desvio, estatísticas globais do treino"},
-        "config_entrada": _config_entrada(tipo),
+        "config_entrada": _config_entrada(arquitetura),
         "janelas": {k: v for k, v in asdict(preproc.MEL128_32K).items()
                     if k in ("sr", "duracao_janela", "passo_janela", "max_janelas", "limiar_db")},
         "agregacao": "média das probabilidades das janelas da gravação",
@@ -106,8 +109,9 @@ def salvar_final(tipo: str, checkpoint: str, descricao: str) -> dict:
 
 def salvar_ensemble(membros: list[str], passo: float = 0.05) -> dict:
     """Pesos escolhidos na validação do fold 0 sobre os finais `membros`; métricas e JSON."""
-    val = {m: mh.probs_val(m, json.loads((PASTA_FINAIS / f"{m}.json").read_text(encoding="utf-8"))["origem"].split("/")[-1][:-3]) for m in membros}
-    te = {m: mh.probs_teste(m, json.loads((PASTA_FINAIS / f"{m}.json").read_text(encoding="utf-8"))["origem"].split("/")[-1][:-3]) for m in membros}
+    infos = {m: json.loads((PASTA_FINAIS / f"{m}.json").read_text(encoding="utf-8")) for m in membros}
+    val = {m: mh.probs_val(i["modelo"], i["origem"].split("/")[-1][:-3]) for m, i in infos.items()}
+    te = {m: mh.probs_teste(i["modelo"], i["origem"].split("/")[-1][:-3]) for m, i in infos.items()}
     y_val, y_te = next(iter(val.values()))[1], next(iter(te.values()))[1]
     Pv, Pt = np.stack([val[m][0] for m in membros]), np.stack([te[m][0] for m in membros])
     melhor, pesos = -1, None

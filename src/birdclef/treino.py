@@ -17,7 +17,9 @@ Melhorias testadas no E5 (desligadas por padrão, então E1-E4 não mudam):
 
 - `ConfigTreino.suavizacao`: *label smoothing* (rótulo-alvo vira (1 - s) no correto e s/C no resto);
 - `ConfigTreino.epocas_cabeca`: ajuste fino em duas fases; nas primeiras épocas só a camada nova
-  (`saida`) treina, com o corpo pré-treinado congelado, e depois o modelo todo.
+  (`saida`) treina, com o corpo pré-treinado congelado, e depois o modelo todo;
+- `ConfigTreino.destilacao` + `treinar(..., alvos_extra=)`: destilação de conhecimento (o alvo
+  mistura o rótulo com as probabilidades de um modelo professor em cada janela).
 """
 
 from dataclasses import dataclass, field
@@ -47,6 +49,7 @@ class ConfigTreino:
     fracao_treino: float = 1.0        # E4: fração das gravações de treino usadas
     suavizacao: float = 0.0           # E5: label smoothing
     epocas_cabeca: int = 0            # E5: épocas iniciais com o corpo congelado (só a `saida` treina)
+    destilacao: float = 0.0           # E5: peso das probabilidades do professor no alvo (precisa de `alvos_extra`)
 
 
 @dataclass
@@ -208,6 +211,7 @@ def treinar(
     cfg: ConfigTreino = ConfigTreino(),
     R: np.ndarray | None = None,
     verbose: bool = True,
+    alvos_extra: np.ndarray | None = None,
 ) -> Resultado:
     """Treina um modelo com o fold `fold_val` como validação e os demais folds de treino.
 
@@ -229,6 +233,8 @@ def treinar(
 
     torch.backends.cudnn.benchmark = True
     modelo = modelos.criar(cfg.modelo, len(classes)).to(disp)
+    if hasattr(modelo, "definir_norm"):  # M1PCEN (E5): a camada PCEN desfaz a normalização por dentro
+        modelo.definir_norm(media, desvio)
     if getattr(modelo, "entrada_normalizada", False):
         # entrada já normalizada na origem (fbank do extrator do AST, E5.6): não renormalizar,
         # senão o modelo pré-treinado recebe uma distribuição diferente da do pré-treino
@@ -265,6 +271,10 @@ def treinar(
             lote = sorteio[i:i + cfg.lote]
             x = lote_tensor(Xt, lote, disp)
             y = F.one_hot(torch.from_numpy(alvo[lote]), len(classes)).float().to(disp)
+            if cfg.destilacao:
+                # destilação (E5): alvo = (1 - λ)·rótulo + λ·probabilidades do professor na mesma janela
+                q = torch.from_numpy(alvos_extra[lote]).float().to(disp)
+                y = (1 - cfg.destilacao) * y + cfg.destilacao * q
             if cfg.suavizacao:
                 y = y * (1 - cfg.suavizacao) + cfg.suavizacao / len(classes)
 

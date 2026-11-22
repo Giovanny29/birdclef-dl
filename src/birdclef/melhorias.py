@@ -176,7 +176,7 @@ def teste_ensemble(membros, pesos) -> float:
 # ----------------------------------------------------------------------------- variantes de treino
 
 def treinar_variante(nome: str, modelo: str, cfg: ConfigTreino, cfg_aum=None, janelas_=None,
-                     fold: int = FOLD) -> tuple[treino.Resultado, float]:
+                     fold: int = FOLD, alvos_extra=None) -> tuple[treino.Resultado, float]:
     """Treina (ou recarrega) uma variante do E5; checkpoint em `checkpoints/<nome>.pt`."""
     ck = PASTA_CHECKPOINTS / f"{nome}.pt"
     if ck.exists():
@@ -186,7 +186,7 @@ def treinar_variante(nome: str, modelo: str, cfg: ConfigTreino, cfg_aum=None, ja
     janelas = janelas if janelas_ is None else janelas_
     cfg_aum = cfg_aum or e.aumento_de(modelo, e.nome_aumento_e1(modelo))
     print(f"--- {nome}", flush=True)
-    res = treino.treinar(X, janelas, fold, cfg_aum, cfg, R=R)
+    res = treino.treinar(X, janelas, fold, cfg_aum, cfg, R=R, alvos_extra=alvos_extra)
     treino.salvar(res, ck, historico=res.historico.to_dict("list"), metricas_val=res.metricas_val,
                   segundos=res.segundos, aumento=asdict(cfg_aum), treino=asdict(cfg))
     (PASTA / "historicos").mkdir(parents=True, exist_ok=True)
@@ -292,6 +292,76 @@ def curva_confiabilidade(y, p, bins: int = 10) -> pd.DataFrame:
     return pd.DataFrame(linhas)
 
 
+# ----------------------------------------------------------------------------- destilação
+
+def alvos_professor(professor: str = "M3_todas_s42_f0", modelo_prof: str = "M3", temperatura: float = 2.0) -> np.ndarray:
+    """Probabilidades do professor (M3 do fold 0) em cada janela de treino do fold 0, suavizadas
+    pela temperatura (p^(1/T), renormalizado). Linhas fora do treino ficam em zero e nunca são
+    usadas. O professor viu exatamente as mesmas janelas de treino, então nada da validação ou do
+    teste vaza para o aluno. Cache em resultados/e5/probs/professor_<nome>.npy."""
+    cache = _cache(f"professor_{professor}_T{temperatura:g}")
+    if cache.exists():
+        return np.load(cache)
+    X, janelas, _ = e.dados_modelo(modelo_prof)
+    idx_tr, _ = treino.indices(janelas, FOLD)
+    res = carregar_checkpoint(PASTA_CHECKPOINTS / f"{professor}.pt", modelo_prof)
+    p = treino.prever_janelas(res.modelo, X, idx_tr, res.norm)
+    p = np.power(p, 1.0 / temperatura)
+    p /= p.sum(1, keepdims=True)
+    alvos = np.zeros((len(janelas), p.shape[1]), dtype=np.float32)
+    alvos[idx_tr] = p
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    np.save(cache, alvos)
+    del res
+    torch.cuda.empty_cache()
+    return alvos
+
+
+# ----------------------------------------------------------------------------- agregação das janelas
+
+def probs_janelas(modelo: str, nome_ck: str, particao: str = "val"):
+    """Probabilidades por janela (sem agregar), o arquivo de cada janela e o rótulo de cada
+    gravação na ordem de `agregar`. `particao`: "val" (fold 0) ou "teste"."""
+    cache = _cache(f"janelas_{particao}_{nome_ck}")
+    X, janelas, _ = e.dados_modelo(modelo)
+    if particao == "val":
+        _, idx = treino.indices(janelas, FOLD)
+    else:
+        idx = np.flatnonzero((janelas["particao"] == "teste").to_numpy())
+    arquivos = janelas["filename"].to_numpy()[idx]
+    classes = sorted(janelas["primary_label"].unique())
+    rot = janelas.iloc[idx].groupby("filename", sort=False)["primary_label"].first()
+    y = rot.map({c: i for i, c in enumerate(classes)}).to_numpy()
+    if cache.exists():
+        return np.load(cache), arquivos, y
+    res = carregar_checkpoint(PASTA_CHECKPOINTS / f"{nome_ck}.pt", modelo)
+    p = treino.prever_janelas(res.modelo, X, idx, res.norm)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    np.save(cache, p)
+    return p, arquivos, y
+
+
+def agregar(pj: np.ndarray, arquivos: np.ndarray, modo: str = "media", k: int = 3) -> np.ndarray:
+    """Probabilidade da gravação a partir das janelas: "media" (o padrão do projeto), "max"
+    (máximo por classe, renormalizado), "topk" (média das k janelas mais confiantes) ou
+    "geometrica" (média dos logaritmos, renormalizada). Ordem das gravações: a de aparição."""
+    ordem = pd.unique(arquivos)
+    if modo == "media":
+        out = pd.DataFrame(pj, index=arquivos).groupby(level=0, sort=False).mean().loc[ordem].to_numpy()
+    elif modo == "max":
+        out = pd.DataFrame(pj, index=arquivos).groupby(level=0, sort=False).max().loc[ordem].to_numpy()
+    elif modo == "geometrica":
+        lg = pd.DataFrame(np.log(np.clip(pj, 1e-12, 1)), index=arquivos).groupby(level=0, sort=False).mean()
+        out = np.exp(lg.loc[ordem].to_numpy())
+    elif modo == "topk":
+        conf = pj.max(1)
+        pos = pd.Series(np.arange(len(arquivos))).groupby(arquivos, sort=False).apply(list)
+        out = np.stack([pj[np.array(ix)[np.argsort(-conf[ix])[:k]]].mean(0) for ix in pos.loc[ordem]])
+    else:
+        raise ValueError(modo)
+    return out / out.sum(1, keepdims=True)
+
+
 # ----------------------------------------------------------------------------- variantes treinadas
 
 def _cfg(modelo: str, **mudancas) -> ConfigTreino:
@@ -303,6 +373,10 @@ def _cfg(modelo: str, **mudancas) -> ConfigTreino:
 VARIANTES = {
     "M1_todas_e50_s42_f0": ("M1", _cfg("M1", epocas=50, paciencia=10), "50 épocas (E1: 30) e paciência 10 (E1: 6)"),
     "M2_todas_e50_s42_f0": ("M2", _cfg("M2", epocas=50, paciencia=10), "50 épocas (E1: 30) e paciência 10 (E1: 6)"),
+    "M1_todas_ls01_s42_f0": ("M1", _cfg("M1", suavizacao=0.1), "label smoothing 0,1"),
+    "M1_todas_destil_s42_f0": ("M1", _cfg("M1", destilacao=0.5),
+                               "destilação: alvo = 0,5·rótulo + 0,5·probabilidades do M3 do fold 0 (temperatura 2)"),
+    "M1PCEN_todas_s42_f0": ("M1PCEN", replace(e.CFG_TREINO["M1"], modelo="M1PCEN"), "PCEN no lugar do log na entrada da mesma CNN"),
     "M3_todas_2fases_s42_f0": ("M3", _cfg("M3", epocas_cabeca=2), "2 primeiras épocas só a cabeça treina (corpo congelado)"),
     "M3_todas_ls01_s42_f0": ("M3", _cfg("M3", suavizacao=0.1), "label smoothing 0,1"),
     "M3_todas_lrb3e-5_s42_f0": ("M3", _cfg("M3", lr_backbone=3e-5), "lr do corpo 3e-5 (E1: 1e-4)"),
@@ -334,7 +408,8 @@ def _rodar_um(nome: str, janelas_autor):
     ini = time.time()
     if nome in VARIANTES:
         modelo, cfg, _ = VARIANTES[nome]
-        res, _ = treinar_variante(nome, modelo, cfg)
+        alvos = alvos_professor() if cfg.destilacao else None
+        res, _ = treinar_variante(nome, modelo, cfg, alvos_extra=alvos)
     else:
         modelo = VARIANTES_AUTOR[nome]
         if janelas_autor is None or modelos_entrada(modelo) != janelas_autor[0]:

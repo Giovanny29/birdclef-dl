@@ -1,0 +1,8 @@
+{
+  "escolhido": "regressão logística C=10",
+  "minutos": 0.03576427698135376,
+  "teste_f1_macro": 0.5502017093025888,
+  "teste_acc_top1": 0.5533333333333333,
+  "teste_acc_top3": 0.7983333333333333,
+  "teste_map": 0.5792618128611186
+}

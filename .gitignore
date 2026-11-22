@@ -284,3 +284,5 @@ checkpoints/finais/*
 !checkpoints/finais/M2*.pt
 !checkpoints/finais/M4*.pt
 !checkpoints/finais/M5*.pt
+# Características do M0 (derivadas dos áudios, como os espectrogramas): fora do git
+resultados/e5/caracteristicas_m0.npy

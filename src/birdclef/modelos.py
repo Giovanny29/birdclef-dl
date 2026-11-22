@@ -17,6 +17,7 @@ ajuste fino numa GPU de 4 GB, então ele é usado congelado como extrator de emb
 from pathlib import Path
 import urllib.request
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -64,6 +65,77 @@ class CNN(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.saida(self.dropout(self.embedding(x)))
+
+
+class PCEN(nn.Module):
+    """Per-Channel Energy Normalization (Wang et al., 2017), com os parâmetros padrão do librosa.
+
+    PCEN(t, f) = (E / (eps + M)^alfa + delta)^r - delta^r, onde E é a potência Mel e M é E suavizada
+    no tempo por um filtro recursivo de 1ª ordem (M[t] = (1 - s)·M[t-1] + s·E[t]). Diferente do log,
+    normaliza cada banda pela própria energia recente: realça eventos (cantos) e atenua ruído de
+    fundo estacionário, o que a torna popular em bioacústica.
+
+    Recebe o log-Mel em dB (ref. 1). Constante de tempo 0,4 s com quadros de 16 ms -> s ≈ 0,039.
+    A potência é escalada por 2^31, como o librosa recomenda para áudio em ponto flutuante.
+
+    Diferença intencional em relação ao `librosa.pcen`: o estado inicial do filtro. O librosa
+    começa M perto de zero, o que infla os primeiros quadros; como cada janela tem só 5 s, isso
+    criaria um artefato no início de toda janela. Aqui M começa no nível do 1º quadro (estado
+    estacionário). Com o mesmo estado inicial, o resultado coincide com uma implementação em
+    numpy/scipy float64 (erro relativo ~3e-7); contra o padrão do librosa a diferença média é ~5%.
+    """
+
+    def __init__(self, sr: int = 32000, hop: int = 512, tempo: float = 0.4, alfa: float = 0.98,
+                 delta: float = 2.0, r: float = 0.5, eps: float = 1e-6):
+        super().__init__()
+        t_quadros = tempo * sr / hop
+        self.s = float((np.sqrt(1 + 4 * t_quadros ** 2) - 1) / (2 * t_quadros ** 2))
+        self.alfa, self.delta, self.r, self.eps = alfa, delta, r, eps
+
+    def forward(self, x_db: torch.Tensor) -> torch.Tensor:
+        import torchaudio.functional as AF
+        with torch.autocast(x_db.device.type, enabled=False):
+            e = torch.pow(10.0, x_db.float() / 10) * 2 ** 31            # (B, M, T)
+            e0 = e[..., :1]
+            # filtro recursivo; estado inicial no 1º quadro (como o lfilter_zi do librosa)
+            a = torch.tensor([1.0, -(1 - self.s)], device=e.device)
+            b = torch.tensor([self.s, 0.0], device=e.device)
+            m = AF.lfilter(e - e0, a, b, clamp=False) + e0
+            return (e / (self.eps + m).pow(self.alfa) + self.delta).pow(self.r) - self.delta ** self.r
+
+
+class CNNPCEN(nn.Module):
+    """M1 com PCEN no lugar do log (E5): mesma CNN, mesma entrada armazenada (log-Mel em dB).
+
+    O treino entrega a entrada já padronizada ((dB - média) / desvio) e com o aumento de dados
+    aplicado, como para o M1. Aqui a padronização é desfeita (média e desvio guardados como
+    *buffers*, então vão junto no checkpoint), a PCEN é calculada e um BatchNorm de 1 canal
+    reescala a saída. Assim ruído, SpecAugment e mixup agem exatamente como no M1: só a
+    representação vista pela CNN muda.
+    """
+
+    def __init__(self, n_classes: int):
+        super().__init__()
+        self.register_buffer("media", torch.tensor(0.0))
+        self.register_buffer("desvio", torch.tensor(1.0))
+        self.pcen = PCEN()
+        self.bn = nn.BatchNorm2d(1)
+        self.cnn = CNN(n_classes)
+        self.saida = self.cnn.saida
+
+    def definir_norm(self, media: float, desvio: float) -> None:
+        self.media.fill_(media)
+        self.desvio.fill_(desvio)
+
+    def _frente(self, x: torch.Tensor) -> torch.Tensor:
+        p = self.pcen(x * self.desvio + self.media)
+        return self.bn(p.unsqueeze(1)).squeeze(1)
+
+    def embedding(self, x: torch.Tensor) -> torch.Tensor:
+        return self.cnn.embedding(self._frente(x))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.cnn(self._frente(x))
 
 
 class CRNN(nn.Module):
@@ -259,7 +331,7 @@ class CNNImagem(nn.Module):
 
 # Configuração de espectrograma de cada modelo (nome da pasta em dados/espectrogramas/).
 ENTRADA = {"M1": "mel128_32k", "M2": "mel128_32k", "M3": "mel64_32k", "M4": "ast_emb", "M5": "mel128_32k",
-           "M4FT": "ast_fbank"}
+           "M4FT": "ast_fbank", "M1PCEN": "mel128_32k"}
 
 
 def criar(nome: str, n_classes: int, pretreinado: bool = True) -> nn.Module:
@@ -275,6 +347,8 @@ def criar(nome: str, n_classes: int, pretreinado: bool = True) -> nn.Module:
         return CabecaLinear(n_classes)
     if nome == "M5":
         return CNNImagem(n_classes, pretreinado=pretreinado)
+    if nome == "M1PCEN":
+        return CNNPCEN(n_classes)
     if nome == "M4FT":  # E5.6: AST com os 2 últimos blocos treináveis
         from birdclef.ast_ft import ASTParcial
         return ASTParcial(n_classes, pretreinado=pretreinado)
