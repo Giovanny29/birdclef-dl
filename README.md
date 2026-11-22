@@ -49,7 +49,8 @@ flowchart LR
 | M4 | Audio Spectrogram Transformer, congelado + camada linear (o ajuste fino completo não cabe em 4 GB) | AudioSet |
 
 No E5 entram ainda, como comparação: M0 (MFCC + classificador clássico, sem rede), M5 (EfficientNet-B0
-do ImageNet), M4FT (AST com os 2 últimos blocos ajustados) e o M1 com PCEN na entrada.
+do ImageNet), M4FT (AST com os 2 últimos blocos ajustados), o M1 com PCEN na entrada e o **M6**, uma
+CNN nossa montada a partir dos resultados (PCEN treinável, blocos residuais SE e atenção nas janelas).
 
 Todos: softmax sobre as espécies, entropia cruzada, AdamW, parada antecipada pelo F1-macro de
 validação.
@@ -210,6 +211,29 @@ falharam também estão registradas.
 | destilação M3 → M1 | 0,858 → 0,853 | – | descarta |
 | M3 em duas fases (corpo congelado nas 2 primeiras épocas) | 0,923 → 0,869 | – | descarta |
 
+**M6: a CNN do projeto** (`src/birdclef/m6.py`, seção 5.9 do notebook 05). Uma CNN do porte do M1
+montada com estruturas conhecidas, cada uma escolhida por um resultado nosso:
+- PCEN treinável por banda (LEAF), porque a PCEN fixa foi a melhor técnica do E5;
+- blocos residuais com *Squeeze-and-Excitation*;
+- canal de posição da frequência (CoordConv), porque cada espécie canta numa faixa;
+- atenção nas janelas (*multiple-instance learning*), por causa do rótulo fraco.
+
+A ablação foi feita uma peça por vez, no fold 0:
+
+| Variante | Parâmetros | F1 val. | F1 teste | Veredito |
+|---|---|---|---|---|
+| M1 + PCEN fixa (base) | 0,39 M | 0,869 | 0,902 | base |
+| M6a: PCEN treinável | 0,39 M | 0,879 | 0,893 | mantém |
+| **M6b: + blocos residuais SE** | **0,32 M** | **0,931** | **0,924** | mantém |
+| M6c: + canal de frequência | 0,32 M | 0,914 | – | descarta |
+| M6 final: M6b + atenção nas janelas | 0,34 M | 0,932 | 0,914 (0 dB: **0,920**) | empata na val., perde no teste |
+
+O M6b, sem nenhum pré-treino, empata com o EfficientNet-B0 do ImageNet (0,923, 12 vezes mais
+parâmetros) e fica a 1,5 ponto do M3 (250 vezes mais). Sob ruído a 0 dB, o M6 fica no nível do M3
+(0,920 contra 0,918). A PCEN aprendeu sozinha a remover o fundo mais depressa abaixo de 1 kHz e a
+preservar a faixa dos cantos (2 a 10 kHz). A atenção concentrou o peso em poucas janelas e não
+superou a média simples. Pelo protocolo, o final escolhido na validação é o M6 com atenção.
+
 Ganhos de ~1 ponto na validação (480 gravações) muitas vezes não se confirmaram no teste; só os
 grandes (PCEN, ensemble, AST parcial) se sustentaram. Por tempo de GPU (~50 min por treino do M3),
 ficaram de fora, registrados como "não executado": M3 com *label smoothing*, M3 com outras taxas
@@ -247,6 +271,7 @@ entre o E1 e as variantes do E5:
 | M4 | cabeça linear sobre o AST congelado (E1, fold 0) | 0,839 | 0,823 | 64 kB (+ AST baixado) | sim |
 | M4FT | AST com 2 blocos ajustados (E5) | 0,848 | 0,853 | 345 MB | não |
 | M5 | EfficientNet-B0 (E5) | 0,904 | 0,923 | 16 MB | não |
+| M6 | CNN do projeto: PCEN treinável + residual SE + atenção (E5.9) | 0,932 | 0,914 | 1,4 MB | sim |
 | ensemble | M1 0,35 + M2 0,10 + M3 0,55, temperatura 0,46 | 0,934 | **0,950** | (usa os membros) | JSON |
 
 **Inferência** (da raiz do repositório, com o ambiente ativo):
@@ -255,6 +280,7 @@ entre o E1 e as variantes do E5:
 python -m birdclef.inferencia caminho.ogg                 # ensemble (padrão; precisa do M3)
 python -m birdclef.inferencia caminho.ogg --modelo M1     # só a CNN, roda na CPU, sem downloads
 python -m birdclef.inferencia caminho.ogg --modelo M3 --top 5
+python -m birdclef.inferencia caminho.ogg --modelo M6     # a CNN do projeto, roda na CPU
 ```
 
 A saída são as espécies mais prováveis com a probabilidade. A inferência repete o caminho do

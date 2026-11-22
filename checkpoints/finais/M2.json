@@ -116,6 +116,6 @@
     "acc_top3": 0.9533333333333334,
     "map": 0.9327242447002639
   },
-  "data": "2026-11-22T09:04:17",
+  "data": "2026-11-22T11:26:05",
   "uso": "python -m birdclef.inferencia caminho.ogg --modelo M2"
 }
