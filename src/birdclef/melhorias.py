@@ -106,6 +106,9 @@ def prever_tta(res, modelo: str, X, janelas, idx, deslocamentos=(0,)) -> np.ndar
     """TTA por deslocamento no tempo: cada janela é deslocada circularmente por `d` segundos
     (eixo dos quadros do log-Mel) e as probabilidades das versões são promediadas. Com (0,) é a
     predição normal. O M4 (embedding fixo) não tem eixo de tempo: só (0,)."""
+    if modelo in ("M6", "M6bA"):  # M6 com atenção: a gravação sai da atenção sobre as janelas, não da média
+        from birdclef import m6
+        return m6.probs_gravacoes(res.modelo, X, janelas, idx, res.norm, res.classes)[0]
     if modelo == "M4" or tuple(deslocamentos) == (0,):
         return treino.prever_gravacoes(res.modelo, X, janelas, idx, res.norm, res.classes)[0]
     quadros_por_s = X.shape[-1] / 5.0
@@ -385,6 +388,15 @@ VARIANTES = {
                         "EfficientNet-B0 do ImageNet no lugar do M1 (mesma entrada 128 × 313)"),
     "M4FT_sem_s42_f0": ("M4FT", ConfigTreino(modelo="M4FT", epocas=6, paciencia=3, lote=8, lr=1e-3, lr_backbone=3e-5),
                         "AST com os 2 últimos blocos + LayerNorm treináveis (M4: só a cabeça linear)"),
+    # E5.9: M6, a CNN do projeto, em ablação (uma peça por vez; ver birdclef.m6). Mesmos
+    # hiperparâmetros e aumento do M1; lr_backbone só ativa os grupos de parâmetros (PCEN sem
+    # weight decay), com a mesma taxa 1e-3.
+    "M6a_todas_s42_f0": ("M6a", replace(e.CFG_TREINO["M1"], modelo="M6a", lr_backbone=1e-3),
+                         "PCEN treinável por banda (M1PCEN: PCEN fixa)"),
+    "M6b_todas_s42_f0": ("M6b", replace(e.CFG_TREINO["M1"], modelo="M6b", lr_backbone=1e-3),
+                         "M6a + blocos residuais com Squeeze-and-Excitation"),
+    "M6c_todas_s42_f0": ("M6c", replace(e.CFG_TREINO["M1"], modelo="M6c", lr_backbone=1e-3),
+                         "M6b + canal com a posição da banda (CoordConv)"),
 }
 # Divisão por gravador (E5.3): mesmo modelo e configuração do E1, só a divisão muda.
 VARIANTES_AUTOR = {"M1_todas_autor_s42_f0": "M1", "M3_todas_autor_s42_f0": "M3"}

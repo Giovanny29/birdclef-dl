@@ -336,7 +336,8 @@ class CNNImagem(nn.Module):
 
 # Configuração de espectrograma de cada modelo (nome da pasta em dados/espectrogramas/).
 ENTRADA = {"M1": "mel128_32k", "M2": "mel128_32k", "M3": "mel64_32k", "M4": "ast_emb", "M5": "mel128_32k",
-           "M4FT": "ast_fbank", "M1PCEN": "mel128_32k"}
+           "M4FT": "ast_fbank", "M1PCEN": "mel128_32k",
+           "M6a": "mel128_32k", "M6b": "mel128_32k", "M6c": "mel128_32k", "M6": "mel128_32k", "M6bA": "mel128_32k"}
 
 
 def criar(nome: str, n_classes: int, pretreinado: bool = True) -> nn.Module:
@@ -354,6 +355,9 @@ def criar(nome: str, n_classes: int, pretreinado: bool = True) -> nn.Module:
         return CNNImagem(n_classes, pretreinado=pretreinado)
     if nome == "M1PCEN":
         return CNNPCEN(n_classes)
+    if nome in ("M6a", "M6b", "M6c", "M6", "M6bA"):  # CNN do projeto (E5.9), ver birdclef.m6
+        from birdclef import m6
+        return m6.criar(nome, n_classes)
     if nome == "M4FT":  # E5.6: AST com os 2 últimos blocos treináveis
         from birdclef.ast_ft import ASTParcial
         return ASTParcial(n_classes, pretreinado=pretreinado)

@@ -90,6 +90,16 @@ class ModeloFinal:
         return preproc.log_mel(janelas32, self.cfg)
 
     @torch.no_grad()
+    def prever_gravacao(self, caminho: Path, janelas32: np.ndarray, inicios: np.ndarray) -> np.ndarray:
+        """Probabilidades da gravação: média das janelas, ou a atenção aprendida no M6."""
+        if self.tipo in ("M6", "M6bA"):  # atenção nas janelas (birdclef.m6)
+            x = torch.from_numpy(self.entradas(caminho, janelas32, inicios).astype(np.float32)).to(self.disp)
+            h = self.rede.embedding((x - self.media) / self.desvio).float()[None]
+            mascara = torch.ones(h.shape[:2], dtype=torch.bool, device=self.disp)
+            return torch.softmax(self.rede.logits_gravacao(h, mascara), 1)[0].cpu().numpy()
+        return self.prever(caminho, janelas32, inicios).mean(0)
+
+    @torch.no_grad()
     def prever(self, caminho: Path, janelas32: np.ndarray, inicios: np.ndarray) -> np.ndarray:
         """Probabilidades por janela (n_janelas, classes)."""
         x = torch.from_numpy(self.entradas(caminho, janelas32, inicios).astype(np.float32)).to(self.disp)
@@ -108,7 +118,7 @@ def recortar(caminho: Path) -> tuple[np.ndarray, np.ndarray]:
 def prever_arquivo(caminho: str | Path, modelo: str = "ensemble", top: int = 3) -> list[dict]:
     """As `top` espécies mais prováveis da gravação, com probabilidade.
 
-    `modelo`: "M1", "M2", "M3", "M4", "M4FT", "M5" (os que existirem em checkpoints/finais/) ou "ensemble".
+    `modelo`: "M1", "M2", "M3", "M4", "M4FT", "M5", "M6" (os que existirem em checkpoints/finais/) ou "ensemble".
     """
     caminho = Path(caminho)
     janelas32, inicios = recortar(caminho)
@@ -119,7 +129,7 @@ def prever_arquivo(caminho: str | Path, modelo: str = "ensemble", top: int = 3) 
         for membro in info["membros"]:
             m = ModeloFinal(membro["nome"])
             assert m.classes == classes, f"classes de {membro['nome']} diferem das do ensemble"
-            probs += membro["peso"] * m.prever(caminho, janelas32, inicios).mean(0)
+            probs += membro["peso"] * m.prever_gravacao(caminho, janelas32, inicios)
         probs /= sum(mb["peso"] for mb in info["membros"])
         T = float(info.get("temperatura", 1.0))
         probs = np.power(np.clip(probs, 1e-12, 1), 1.0 / T)
@@ -127,7 +137,7 @@ def prever_arquivo(caminho: str | Path, modelo: str = "ensemble", top: int = 3) 
     else:
         m = ModeloFinal(modelo)
         classes, nomes_comuns = m.classes, m.info.get("nomes_comuns", {})
-        probs = m.prever(caminho, janelas32, inicios).mean(0)
+        probs = m.prever_gravacao(caminho, janelas32, inicios)
     ordem = np.argsort(-probs)[:top]
     return [{"especie": classes[i], "nome": nomes_comuns.get(classes[i], ""), "probabilidade": float(probs[i])}
             for i in ordem]
@@ -136,7 +146,7 @@ def prever_arquivo(caminho: str | Path, modelo: str = "ensemble", top: int = 3) 
 def main(argv=None):
     p = argparse.ArgumentParser(description="Espécies de ave mais prováveis numa gravação (BirdCLEF 2025, 20 espécies).")
     p.add_argument("audio", help="arquivo de áudio (.ogg, .wav, .mp3, ...)")
-    p.add_argument("--modelo", default="ensemble", choices=["M1", "M2", "M3", "M4", "M4FT", "M5", "ensemble"])
+    p.add_argument("--modelo", default="ensemble", choices=["M1", "M2", "M3", "M4", "M4FT", "M5", "M6", "ensemble"])
     p.add_argument("--top", type=int, default=3)
     a = p.parse_args(argv)
     janelas, _ = recortar(Path(a.audio))

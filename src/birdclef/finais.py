@@ -40,11 +40,16 @@ VARIANTES_E5 = {
     "M4": [],
     "M4FT": [("M4FT_sem_s42_f0", "AST com os 2 últimos blocos ajustados")],
     "M5": [("M5_todas_s42_f0", "EfficientNet-B0 ImageNet")],
+    # E5.9: a CNN do projeto; o candidato é o M6 completo ou o seu corpo (M6c) com a média das janelas
+    "M6": [("M6bA_todas_s42_f0", "CNN do projeto: PCEN treinável + blocos residuais SE + atenção nas janelas"),
+           ("M6b_todas_s42_f0", "PCEN treinável + blocos residuais SE (média das janelas)"),
+           ("M6_todas_s42_f0", "PCEN treinável + residual SE + frequência + atenção"),
+           ("M6c_todas_s42_f0", "PCEN treinável + residual SE + frequência (média das janelas)")],
 }
 
 
 def candidatos(tipo: str) -> list[tuple[str, str]]:
-    lista = [] if tipo in ("M5", "M4FT") else [(mh.nome_e1(tipo), "E1, fold 0")]
+    lista = [] if tipo in ("M5", "M4FT", "M6") else [(mh.nome_e1(tipo), "E1, fold 0")]
     lista += VARIANTES_E5.get(tipo, [])
     return [(n, d) for n, d in lista if (PASTA_CHECKPOINTS / f"{n}.pt").exists()]
 
@@ -96,7 +101,8 @@ def salvar_final(tipo: str, checkpoint: str, descricao: str) -> dict:
         "config_entrada": _config_entrada(arquitetura),
         "janelas": {k: v for k, v in asdict(preproc.MEL128_32K).items()
                     if k in ("sr", "duracao_janela", "passo_janela", "max_janelas", "limiar_db")},
-        "agregacao": "média das probabilidades das janelas da gravação",
+        "agregacao": ("atenção aprendida sobre os embeddings das janelas (M6, peça 4)" if arquitetura in ("M6", "M6bA")
+                      else "média das probabilidades das janelas da gravação"),
         "hiperparametros": {"treino": ck.get("treino"), "aumento": ck.get("aumento")},
         "metricas_validacao": {"fold": 0, **treino.metricas(y_val, p_val)},
         "metricas_teste": treino.metricas(y_te, p_te),
@@ -147,7 +153,7 @@ def salvar_ensemble(membros: list[str], passo: float = 0.05) -> dict:
     return info
 
 
-def criar(tipos=("M1", "M2", "M3", "M4", "M4FT", "M5"), membros_ensemble=("M1", "M2", "M3")) -> pd.DataFrame:
+def criar(tipos=("M1", "M2", "M3", "M4", "M4FT", "M5", "M6"), membros_ensemble=("M1", "M2", "M3")) -> pd.DataFrame:
     """Escolhe e salva o final de cada tipo disponível e o ensemble. Devolve o resumo."""
     linhas = []
     for tipo in tipos:
