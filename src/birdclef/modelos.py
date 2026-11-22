@@ -97,10 +97,15 @@ class PCEN(nn.Module):
         with torch.autocast(x_db.device.type, enabled=False):
             e = torch.pow(10.0, x_db.float() / 10) * 2 ** 31            # (B, M, T)
             e0 = e[..., :1]
-            # filtro recursivo; estado inicial no 1º quadro (como o lfilter_zi do librosa)
+            # filtro recursivo M[t] = (1 - s)·M[t-1] + s·E[t] com estado inicial M[-1] = E[0].
+            # Correção (E5): a versão anterior calculava lfilter(E - E0) + E0, que em float32 cancela
+            # números grandes quando o 1º quadro é forte e o resto é fraco; M saía levemente negativo,
+            # M^alfa virava NaN e o treino do M1PCEN falhou na 1ª validação. Agora usamos a solução
+            # exata, soma de termos positivos: M[t] = lfilter(E)[t] + (1 - s)^(t+1)·E0.
             a = torch.tensor([1.0, -(1 - self.s)], device=e.device)
             b = torch.tensor([self.s, 0.0], device=e.device)
-            m = AF.lfilter(e - e0, a, b, clamp=False) + e0
+            t = torch.arange(1, e.shape[-1] + 1, device=e.device, dtype=e.dtype)
+            m = AF.lfilter(e, a, b, clamp=False) + (1 - self.s) ** t * e0
             return (e / (self.eps + m).pow(self.alfa) + self.delta).pow(self.r) - self.delta ** self.r
 
 
