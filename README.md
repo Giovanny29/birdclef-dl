@@ -124,6 +124,16 @@ aumento no teste limpo.
 ![E2](resultados/e2/e2_f1_teste.png)
 ![E3](resultados/e3/e3_snr.png)
 
+## Entrega final
+
+| Item | Onde |
+|---|---|
+| 1. Relatório no template IEEE de conferência | [relatorio/main.pdf](relatorio/main.pdf) (fonte LaTeX em `relatorio/main.tex`, figuras em `relatorio/figuras/`) |
+| 2. Slides da apresentação | [apresentacao/slides.pdf](apresentacao/slides.pdf) |
+| 3. Códigos do projeto | `src/birdclef/` e `notebooks/` (este repositório) |
+
+A apresentação do projeto foi feita em vídeo, com os slides acima.
+
 ## Parte 2: resultados
 
 Notebooks [04_parte2_modelos](notebooks/04_parte2_modelos.ipynb) (M2, M3, M4, E1 a E4 e

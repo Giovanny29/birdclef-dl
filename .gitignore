@@ -288,3 +288,6 @@ checkpoints/finais/*
 !checkpoints/finais/M6.pt
 # Características do M0 (derivadas dos áudios, como os espectrogramas): fora do git
 resultados/e5/caracteristicas_m0.npy
+
+# compilador LaTeX baixado localmente (tectonic) e seu cache
+.tools/
